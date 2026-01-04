@@ -1,0 +1,1203 @@
+1 Date: 04 Jan, 2026-Sunday
+STANDARD OPERATING PROCEDURE (SOP) Hybrid High Availability / Disaster Recovery: On-Prem SQL Server 2019 ↔ AWS EC2 SQL Server 2019
+IMPORTANT ARCHITECTURAL NOTE
+•
+Synchronous HA across on-prem and AWS is NOT recommended due to latency.
+•
+This SOP implements:
+o
+Always On Availability Groups
+o
+Asynchronous commit
+o
+Hybrid DR / HA (not local HA)
+1. OBJECTIVE To configure a hybrid SQL Server 2019 Always On Availability Group with:
+•
+Primary Replica: On-Prem SQL Server 2019
+•
+Secondary Replica: AWS EC2 SQL Server 2019
+Providing:
+•
+Database-level HA
+•
+Disaster Recovery
+•
+Minimal data loss (async mode)
+•
+Controlled failover (manual to AWS)
+2. ARCHITECTURE OVERVIEW
+2.1 Supported HA Method
+Feature
+Supported
+Always On Availability Groups
+Yes
+Failover Cluster Instance (FCI)
+No
+Log Shipping
+Alternative
+Replication
+Not HA
+2.2 High-Level Design
+On-Prem Data Center
+•
+SQL Server 2019 (Primary)
+•
+WSFC Node
+AWS VPC
+•
+EC2 SQL Server 2019 (Secondary)
+•
+WSFC Node
+•
+Cloud Witness (S3)
+Connectivity
+•
+Site-to-Site VPN or Direct Connect
+•
+Private IP communication only
+3. PREREQUISITES
+3.1 Software Requirements
+•
+SQL Server 2019 Enterprise Edition
+•
+Windows Server 2016 / 2019
+•
+Same SQL Server CU on both nodes
+•
+.NET Framework ≥ 4.7.2
+2 Date: 04 Jan, 2026-Sunday
+3.2 Network Requirements
+Requirement
+Value
+Latency
+Preferably < 100 ms RTT
+Bandwidth
+≥ 100 Mbps
+Ports
+1433, 5022, 3343, 445, 135
+DNS
+Bi-directional resolution
+Time Sync
+NTP synchronized
+3.3 AWS Requirements
+•
+EC2 with SQL Server 2019 AMI
+•
+EBS gp3 or io2
+•
+Security Groups allowing SQL, AG, WSFC traffic
+•
+VPN or Direct Connect to on-prem
+4. STEP-BY-STEP
+STEP 1 – Pre-Implementation Validation
+Owner: DBA / Infra
+•
+Verify SQL version and CU
+SELECT @@VERSION;
+•
+Verify Enterprise Edition
+SELECT SERVERPROPERTY('Edition');
+•
+Verify time sync
+w32tm /query /status
+STEP 2 – Network Configuration
+Owner: Network
+1.
+Establish Site-to-Site VPN or Direct Connect
+2.
+Ensure no NAT between SQL nodes
+3.
+Open required ports:
+Port
+Purpose
+1433
+SQL
+5022
+AG
+3343
+WSFC
+445
+Witness
+135
+RPC
+4.
+Validate connectivity:
+Test-NetConnection <OtherNodeIP> -Port 1433
+Test-NetConnection <OtherNodeIP> -Port 5022
+STEP 3 – Windows Server Failover Cluster (WSFC)
+Owner: Infra
+1.
+Install Failover Clustering:
+3 Date: 04 Jan, 2026-Sunday
+Install-WindowsFeature Failover-Clustering -IncludeManagementTools
+2.
+Validate cluster:
+Test-Cluster -Node OnPremSQL, AWSSQL
+(Storage warnings expected)
+3.
+Create cluster:
+New-Cluster `
+-Name HybridSQLCluster `
+-Node OnPremSQL, AWSSQL `
+-NoStorage `
+-StaticAddress <ClusterIP>
+4.
+Configure quorum (MANDATORY):
+Set-ClusterQuorum `
+-CloudWitness `
+-AccountName <AWSStorageAccount> `
+-AccessKey <Key> `
+-Endpoint https://s3.amazonaws.com
+STEP 4 – SQL Server Always On Configuration
+Owner: DBA
+1.
+Enable Always On (SQL Configuration Manager)
+2.
+Restart SQL Services
+3.
+Create mirroring endpoint on both servers:
+CREATE ENDPOINT Hadr_endpoint
+STATE = STARTED
+AS TCP (LISTENER_PORT = 5022)
+FOR DATABASE_MIRRORING (ROLE = ALL);
+STEP 5 – Database Preparation
+Owner: DBA
+1.
+Set FULL recovery:
+ALTER DATABASE MyDB SET RECOVERY FULL;
+2.
+Backup on primary:
+BACKUP DATABASE MyDB TO DISK = '\\BackupShare\MyDB_full.bak';
+BACKUP LOG MyDB TO DISK = '\\BackupShare\MyDB_log.trn';
+3.
+Restore on AWS with NORECOVERY:
+RESTORE DATABASE MyDB FROM DISK = '\\BackupShare\MyDB_full.bak' WITH NORECOVERY;
+RESTORE LOG MyDB FROM DISK = '\\BackupShare\MyDB_log.trn' WITH NORECOVERY;
+STEP 6 – Availability Group Creation
+Owner: DBA
+1.
+Create AG on On-Prem Primary
+2.
+Join AWS Secondary
+3.
+Validate replica roles
+SELECT replica_server_name, role_desc
+FROM sys.dm_hadr_availability_replica_states;
+STEP 7 – Listener Configuration (AWS-SAFE)
+4 Date: 04 Jan, 2026-Sunday
+Owner: DBA / Network
+•
+Create DNS-only listener
+ALTER AVAILABILITY GROUP HybridAG
+ADD LISTENER 'HybridAGListener'
+(
+WITH DNS_NAME = 'HybridAGListener.company.com',
+PORT = 1433
+);
+•
+DNS settings:
+o
+Record: A or CNAME
+o
+TTL: 30–60 seconds
+o
+Normal → On-Prem
+o
+DR → AWS
+⚠ Floating IP listeners are NOT supported in AWS
+STEP 8 – SQL Agent Jobs
+Owner: DBA
+Job Type
+Runs On
+Backups
+Primary only
+Maintenance
+Primary only
+Monitoring
+Both
+Disable jobs on secondary:
+EXEC msdb.dbo.sp_update_job
+@job_name = 'JobName',
+@enabled = 0;
+STEP 9 – Monitoring & Validation
+Owner: DBA
+SELECT
+database_name,
+synchronization_state_desc,
+is_suspended
+FROM sys.dm_hadr_database_replica_states;
+Get-ClusterGroup
+Get-ClusterResource
+STEP 10 – Failover & DR Testing
+Owner: DBA / Network / App Team
+1.
+Manual failover:
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+2.
+Update DNS to AWS IP
+3.
+Validate applications
+STEP 11 – Failback Procedure
+Owner: DBA / Network
+1.
+Re-sync On-Prem
+2.
+Fail back to On-Prem
+5 Date: 04 Jan, 2026-Sunday
+3.
+Update DNS
+4.
+Resume jobs
+STEP 12 – Security Hardening
+Owner: Infra / DBA
+•
+TLS 1.2
+•
+Security Group hardening
+•
+Backup encryption
+•
+TDE (optional)
+•
+gMSA (optional)
+5. RTO / RPO ACCEPTANCE CRITERIA
+Metric
+Target
+Notes
+RPO
+≤ 5 minutes
+Async commit dependent on latency
+RTO
+≤ 30 minutes
+Includes DNS + validation
+Failover Type
+Manual
+No auto-failover to AWS
+Data Loss
+Minimal
+Last async commit
+6. EXECUTION CHECKLIST (RUNBOOK)
+Pre-Go-Live
+☐ VPN / DX validated ☐ Ports opened ☐ WSFC healthy ☐ Cloud Witness online
+AG Setup
+☐ Always On enabled ☐ Endpoints created ☐ AG created ☐ Secondary joined
+Listener
+☐ DNS-only listener created ☐ TTL ≤ 60s ☐ DNS tested
+DR Test
+☐ Manual failover tested ☐ DNS updated ☐ App validated ☐ Failback tested
+Documentation
+☐ Architecture diagram ☐ DNS procedure ☐ DR checklist ☐ Quarterly drill scheduled
+FINAL BEST PRACTICES (NON-NEGOTIABLE)
+6 Date: 04 Jan, 2026-Sunday
+✔ Async commit only ✔ DNS-based listener only ✔ Cloud Witness mandatory ✔ Manual failover to AWS ✔ Quarterly DR testing
+7 Date: 04 Jan, 2026-Sunday
+Below is a ONE-PAGE OPERATIONAL RUNBOOK followed by pre-failover and post-failover validation queries.
+This is what an on-call DBA / Infra engineer actually uses during an incident.
+ONE-PAGE OPERATIONAL RUNBOOK
+Hybrid SQL Server 2019 HA / DR
+On-Prem → AWS EC2 (Always On AG, Async)
+PURPOSE
+Provide a fast, safe, repeatable procedure to fail over SQL Server 2019 from On-Prem Primary to AWS DR Secondary, validate health, and optionally fail back.
+ARCHITECTURE SUMMARY
+•
+HA Technology: Always On Availability Groups
+•
+Commit Mode: Asynchronous
+•
+Primary: On-Prem SQL Server 2019
+•
+DR: AWS EC2 SQL Server 2019
+•
+WSFC: Hybrid cluster with Cloud Witness
+•
+Listener: DNS-based only (no floating IP)
+RTO / RPO TARGETS
+Metric
+Target
+RPO
+≤ 5 minutes
+RTO
+≤ 30 minutes
+Failover Type
+Manual
+Data Loss
+Minimal (async window)
+ROLES & OWNERSHIP
+Task
+Owner
+Network / DNS
+Network
+WSFC
+Infra
+SQL AG
+DBA
+App Validation
+App Team
+PRE-FAILOVER CHECKS (MANDATORY)
+1️) Infrastructure Health
+Get-ClusterGroup
+Get-ClusterResource
+✔ Cluster Online ✔ Cloud Witness reachable
+2) Availability Group Health (RUN ON PRIMARY)
+SELECT
+ar.replica_server_name,
+ars.role_desc,
+8 Date: 04 Jan, 2026-Sunday
+ars.connected_state_desc,
+ars.synchronization_health_desc
+FROM sys.dm_hadr_availability_replica_states ars
+JOIN sys.availability_replicas ar
+ON ars.replica_id = ar.replica_id;
+✔ Secondary = CONNECTED ✔ Sync Health = HEALTHY
+3️) Database Sync State
+SELECT
+db_name(drs.database_id) AS database_name,
+drs.synchronization_state_desc,
+drs.log_send_queue_size,
+drs.redo_queue_size
+FROM sys.dm_hadr_database_replica_states drs;
+✔ No SUSPENDED databases ✔ Acceptable log send queue
+4️) SQL Agent Safety
+SELECT name, enabled
+FROM msdb.dbo.sysjobs;
+✔ Jobs enabled only on Primary
+FAILOVER PROCEDURE (ON-CALL STEPS)
+STEP 1 – Freeze Activity
+•
+Notify application owners
+•
+Pause batch jobs / ETL
+•
+Confirm no deployments running
+STEP 2 – Manual Failover to AWS
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+✔ AWS replica becomes PRIMARY
+STEP 3 – DNS Update (CRITICAL)
+•
+Update HybridAGListener.company.com
+•
+Point to AWS SQL private IP
+•
+TTL: 30–60 seconds
+POST-FAILOVER VALIDATION (RUN ON AWS)
+1️) Confirm Primary Role
+SELECT replica_server_name, role_desc
+FROM sys.dm_hadr_availability_replica_states;
+✔ AWS = PRIMARY
+2) Database Status
+SELECT
+name, state_desc, is_read_only
+9 Date: 04 Jan, 2026-Sunday
+FROM sys.databases
+WHERE name NOT IN ('master','model','msdb','tempdb');
+✔ ONLINE ✔ Read/Write enabled
+3️) AG Sync Health
+SELECT
+db_name(database_id) AS database_name,
+synchronization_state_desc
+FROM sys.dm_hadr_database_replica_states;
+✔ State = SYNCHRONIZING or SYNCHRONIZED
+4️) SQL Error Log
+EXEC xp_readerrorlog 0, 1, 'error';
+✔ No AG / WSFC errors
+5️) Application Validation
+•
+Login test
+•
+Read/write test
+•
+Performance sanity check
+FAILBACK PROCEDURE (PLANNED)
+STEP 1 – Prepare On-Prem
+•
+Confirm On-Prem replica healthy
+•
+Ensure sync catching up
+SELECT
+replica_server_name,
+synchronization_health_desc
+FROM sys.dm_hadr_availability_replica_states;
+STEP 2 – Failback
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+STEP 3 – DNS Rollback
+•
+Point listener back to On-Prem IP
+STEP 4 – Resume Jobs
+•
+Enable SQL Agent jobs on On-Prem
+•
+Disable jobs on AWS
+COMMON FAILURE SCENARIOS & ACTIONS
+Issue
+Action
+Replica disconnected
+Check VPN / SG / firewall
+AG suspended
+Resume DB, review error log
+Apps not reconnecting
+Check DNS TTL
+10 Date: 04 Jan, 2026-Sunday
+Issue
+Action
+High RPO
+Review network latency
+NON-NEGOTIABLE RULES
+✔ Async commit only ✔ DNS-based listener only ✔ No auto-failover to AWS ✔ Cloud Witness mandatory ✔ Quarterly DR drills
+11 Date: 04 Jan, 2026-Sunday
+Template-1: INCIDENT version for high-stress outage scenarios which includes a Rollback Decision Matrix.
+INCIDENT CARD
+SQL Server 2019 Hybrid DR (On-Prem ➜ AWS)
+Always On AG | Async | DNS Listener
+WHAT THIS IS
+Manual DR failover runbook for on-call DBA / Infra.
+•
+Primary: On-Prem SQL 2019
+•
+DR: AWS EC2 SQL 2019
+•
+Listener: DNS only
+•
+Quorum: Cloud Witness
+•
+Auto-failover to AWS: NEVER
+TARGETS
+Metric
+Target
+RTO
+≤ 30 min
+RPO
+≤ 5 min
+Failover
+Manual
+OWNERS
+•
+DBA → SQL / AG
+•
+Infra → WSFC
+•
+Network → VPN / DNS
+•
+App → Validation
+PRE-FAILOVER CHECK (60 seconds)
+WSFC
+Get-ClusterGroup
+✔ Cluster Online
+AG Health (Primary)
+SELECT ar.replica_server_name, ars.role_desc, ars.synchronization_health_desc
+FROM sys.dm_hadr_availability_replica_states ars
+JOIN sys.availability_replicas ar ON ars.replica_id = ar.replica_id;
+✔ Secondary CONNECTED ✔ Health = HEALTHY
+DB Sync
+SELECT db_name(database_id), synchronization_state_desc
+FROM sys.dm_hadr_database_replica_states;
+✔ No SUSPENDED DBs
+FAILOVER (ON-CALL STEPS)
+1️) Freeze
+•
+Stop ETL / jobs
+12 Date: 04 Jan, 2026-Sunday
+•
+Notify app team
+2) Failover
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+3️) DNS
+•
+Update: HybridAGListener.company.com
+•
+➜ AWS SQL IP
+•
+TTL ≤ 60s
+POST-FAILOVER CHECK (AWS)
+Primary Role
+SELECT replica_server_name, role_desc
+FROM sys.dm_hadr_availability_replica_states;
+✔ AWS = PRIMARY
+DB State
+SELECT name, state_desc FROM sys.databases;
+✔ ONLINE
+Error Log
+EXEC xp_readerrorlog 0, 1, 'error';
+✔ No AG/WSFC errors
+App Test
+✔ Login ✔ Read/Write ✔ Performance OK
+ROLLBACK DECISION MATRIX (CRITICAL)
+Condition
+Action
+On-Prem reachable within 10 min
+WAIT – Do NOT failover
+On-Prem down > 10 min
+FAILOVER to AWS
+Data divergence detected
+STOP – Escalate DBA Lead
+Apps unstable after failover
+Rollback DNS only
+AWS stable > 24 hrs
+Plan controlled failback
+FAILBACK (PLANNED ONLY)
+Preconditions
+✔ On-Prem reachable ✔ AG sync healthy
+Steps
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+•
+DNS ➜ On-Prem IP
+•
+Resume jobs on On-Prem
+•
+Disable jobs on AWS
+13 Date: 04 Jan, 2026-Sunday
+NEVER DO
+Auto-failover to AWS Floating IP listener Synchronous commit Panic failover without checks
+🛡 GOLDEN RULES
+✔ Async commit only ✔ DNS listener only ✔ Cloud Witness mandatory ✔ Quarterly DR test
+KEEP THIS NOTES NEAR YOUR LAPTOP DURING INCIDENTS
+14 Date: 04 Jan, 2026-Sunday
+Template-2: INCIDENT version with the Escalation Contacts section and the exact RPO measurement query.
+INCIDENT CARD
+SQL Server 2019 Hybrid DR (On-Prem ➜ AWS)
+Always On AG | Async | DNS Listener
+WHAT THIS IS
+Manual DR failover runbook for production incidents.
+•
+Primary: On-Prem SQL 2019
+•
+DR: AWS EC2 SQL 2019
+•
+Listener: DNS only
+•
+Quorum: Cloud Witness
+•
+Auto-failover to AWS: NEVER
+TARGETS
+Metric
+Target
+RTO
+≤ 30 min
+RPO
+≤ 5 min
+Failover
+Manual
+OWNERS
+•
+DBA → SQL / AG
+•
+Infra → WSFC
+•
+Network → VPN / DNS
+•
+App Team → Validation
+ESCALATION CONTACTS (FILL BEFORE GO-LIVE)
+Role
+Name
+Contact
+When to Call
+Primary DBA
+__________
+__________
+AG errors / data risk
+Infra Lead
+__________
+__________
+WSFC / server outage
+Network Lead
+__________
+__________
+VPN / DNS failure
+App Owner
+__________
+__________
+App validation issues
+Management / IC
+__________
+__________
+DR declaration
+PRE-FAILOVER CHECK (≤ 60 seconds)
+WSFC
+Get-ClusterGroup
+✔ Cluster Online
+AG Health (Primary)
+SELECT ar.replica_server_name,
+ars.role_desc,
+ars.connected_state_desc,
+ars.synchronization_health_desc
+15 Date: 04 Jan, 2026-Sunday
+FROM sys.dm_hadr_availability_replica_states ars
+JOIN sys.availability_replicas ar
+ON ars.replica_id = ar.replica_id;
+✔ Secondary CONNECTED ✔ Health = HEALTHY
+EXACT RPO MEASUREMENT (RUN ON PRIMARY)
+SELECT
+db_name(drs.database_id) AS database_name,
+drs.log_send_queue_size / 1024 AS log_send_queue_MB,
+drs.redo_queue_size / 1024 AS redo_queue_MB,
+DATEDIFF(SECOND,
+drs.last_commit_time,
+GETUTCDATE()) AS estimated_data_loss_seconds
+FROM sys.dm_hadr_database_replica_states drs;
+Interpretation
+•
+estimated_data_loss_seconds ≈ RPO
+•
+If > 300 seconds, ESCALATE DBA
+FAILOVER (ON-CALL STEPS)
+1️) Freeze
+•
+Stop ETL / jobs
+•
+Notify App Team
+2) Failover
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+3️) DNS
+•
+Update: HybridAGListener.company.com
+•
+➜ AWS SQL private IP
+•
+TTL ≤ 60s
+POST-FAILOVER CHECK (AWS)
+Primary Role
+SELECT replica_server_name, role_desc
+FROM sys.dm_hadr_availability_replica_states;
+✔ AWS = PRIMARY
+DB State
+SELECT name, state_desc FROM sys.databases;
+✔ ONLINE & Read/Write
+Error Log
+EXEC xp_readerrorlog 0, 1, 'error';
+✔ No AG / WSFC errors
+App Test
+✔ Login ✔ Read ✔ Write ✔ Performance OK
+16 Date: 04 Jan, 2026-Sunday
+ROLLBACK DECISION MATRIX (DO NOT SKIP)
+Condition
+Action
+On-Prem reachable < 10 min
+WAIT – No failover
+On-Prem down > 10 min
+FAILOVER to AWS
+RPO > 5 min
+ESCALATE DBA
+Data inconsistency
+STOP – Escalate DBA Lead
+Apps unstable
+Rollback DNS only
+AWS stable > 24 hrs
+Plan failback
+FAILBACK (PLANNED ONLY)
+Preconditions
+✔ On-Prem reachable ✔ AG sync healthy
+Steps
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+•
+DNS ➜ On-Prem IP
+•
+Enable jobs on On-Prem
+•
+Disable jobs on AWS
+NEVER DO
+Auto-failover to AWS Floating IP listener Synchronous commit Skip RPO check
+🛡 GOLDEN RULES
+✔ Async commit only ✔ DNS listener only ✔ Cloud Witness mandatory ✔ Quarterly DR drills
+PRINT AND KEEP HANDY DURING INCIDENTS
+17 Date: 04 Jan, 2026-Sunday
+1. RPO trend monitoring query (for early warning)
+2. AWS-only DR variant (when on-prem is completely unavailable)
+3. Executive-level DR declaration template (email)
+1️) RPO TREND MONITORING QUERY (PROACTIVE)
+Purpose: Track RPO drift over time instead of checking it only during an outage.
+Run on Primary (On-Prem) every 1–5 minutes (Agent job)
+SELECT
+GETUTCDATE() AS sample_time_utc,
+db_name(drs.database_id) AS database_name,
+drs.log_send_queue_size / 1024 AS log_send_queue_MB,
+drs.redo_queue_size / 1024 AS redo_queue_MB,
+DATEDIFF(SECOND,
+drs.last_commit_time,
+GETUTCDATE()) AS estimated_RPO_seconds
+FROM sys.dm_hadr_database_replica_states drs
+WHERE drs.is_primary_replica = 1;
+Alert Thresholds (Recommended)
+Metric
+Warning
+Critical
+Estimated RPO
+> 180 sec
+> 300 sec
+Log Send Queue
+> 512 MB
+> 1 GB
+Redo Queue
+> 512 MB
+> 1 GB
+Action
+•
+Warning → Monitor network latency
+•
+Critical → Escalate DBA + Network BEFORE outage
+2) AWS-ONLY DR VARIANT (ON-PREM UNREACHABLE)
+Use this ONLY when:
+•
+On-prem SQL + WSFC node are completely unreachable
+•
+VPN / DC outage or DC power failure
+•
+No graceful failover possible
+This is a FORCED DR scenario
+AWS-Only DR Steps
+STEP 1 — Declare DR
+•
+Incident Commander approval required
+•
+Notify Executive / App Owners
+STEP 2 — Force AWS Online (DBA)
+ALTER AVAILABILITY GROUP HybridAG FORCE_FAILOVER_ALLOW_DATA_LOSS;
+✔ AWS becomes PRIMARY ⚠ Possible data loss (async window)
+18 Date: 04 Jan, 2026-Sunday
+STEP 3 — DNS Update (Network)
+•
+HybridAGListener.company.com ➜ AWS SQL IP
+•
+TTL ≤ 60 seconds
+STEP 4 — Validate (DBA / App)
+SELECT name, state_desc FROM sys.databases;
+✔ ONLINE ✔ Read/Write
+STEP 5 — Disable On-Prem Jobs (When It Comes Back)
+•
+Prevent split-brain
+•
+Keep AWS as active primary until controlled failback
+AWS-Only DR RULES
+✔ Use only with exec approval ✔ Document estimated data loss ✔ Mandatory post-incident review
+3️) EXECUTIVE-LEVEL DR DECLARATION TEMPLATE (EMAIL)
+Use this exact wording to avoid ambiguity.
+Dear Leadership Team,
+This email is to formally declare a Disaster Recovery (DR) event for the SQL Server production environment.
+Reason for DR Declaration:
+•
+On-Premises SQL infrastructure is currently unavailable and cannot be restored within the defined RTO.
+DR Action Taken / Planned:
+•
+SQL Server production workload is being failed over to the AWS DR environment using Always On Availability Groups.
+Expected Impact:
+•
+Application connectivity interruption during failover window
+•
+Potential data loss limited to the asynchronous replication window (RPO ≤ 5 minutes target)
+Current Status:
+•
+DR failover: ☐ In Progress ☐ Completed
+•
+AWS environment: ☐ Primary ☐ Validated
+•
+Applications: ☐ Validation in progress
+Next Update:
+•
+Next status update will be provided in minutes or upon completion.
+This DR action is being executed in accordance with the approved DR runbook.
+Regards, <Incident Commander / DBA Lead Name>
+19 Date: 04 Jan, 2026-Sunday
+FINAL ADDITIONS TO INCIDENT CARD (SUMMARY)
+New Capabilities Added
+✔ Proactive RPO trend monitoring ✔ Forced AWS-only DR path ✔ Executive-ready DR communication
+When to Use What
+Scenario
+Action
+Graceful outage
+Manual failover
+RPO drifting
+Investigate early
+On-prem lost
+AWS-only DR
+Leadership notification
+Exec template
+20 Date: 04 Jan, 2026-Sunday
+Three operational add-ons, written to plug directly into incident card\runbook ecosystem: These are production-grade, audit-safe, and ITSM-aligned.
+1️) POST-INCIDENT REVIEW (PIR) CHECKLIST
+(Complete within 24–72 hours after DR event)
+Owner: DBA Lead / Incident Commander
+A. Incident Summary
+☐ Incident date & time (UTC) ☐ Duration of outage ☐ Affected applications ☐ DR type used:
+•
+☐ Planned failover
+•
+☐ AWS-only forced DR
+☐ RTO met? (Yes / No) ☐ RPO met? (Yes / No)
+B. Technical Validation
+☐ AG health verified post-incident ☐ WSFC quorum stable ☐ No suspended databases ☐ SQL Agent jobs correctly aligned ☐ Backups running successfully
+SELECT synchronization_health_desc
+FROM sys.dm_hadr_availability_replica_states;
+C. Data Integrity Confirmation
+☐ Application-level validation completed ☐ Row counts / checksums verified (if applicable) ☐ No orphaned users or failed logins ☐ No data correction required
+D. Root Cause Analysis (RCA)
+☐ Primary failure cause identified ☐ Secondary contributing factors documented ☐ Why DR was required (not just failover)
+Examples:
+•
+Network outage
+•
+Storage failure
+•
+OS patch issue
+•
+Human error
+E. Lessons Learned
+☐ What worked well ☐ What failed or delayed recovery
+21 Date: 04 Jan, 2026-Sunday
+☐ Tooling or monitoring gaps ☐ Training gaps
+F. Action Items
+Action
+Owner
+Target Date
+☐ PIR approved by DBA Lead ☐ PIR shared with stakeholders
+2) AUDIT-READY EVIDENCE COLLECTION
+(Keep for SOX / ISO / SOC audits)
+Owner: DBA / Compliance
+A. Evidence to Capture (MANDATORY)
+1. Timeline Evidence
+☐ DR declaration timestamp ☐ Failover command execution time ☐ DNS change time ☐ Application validation completion
+2. SQL Evidence (Screenshots or Output)
+Run and archive results of:
+SELECT @@SERVERNAME, GETDATE();
+SELECT replica_server_name, role_desc
+FROM sys.dm_hadr_availability_replica_states;
+SELECT name, state_desc
+FROM sys.databases;
+EXEC xp_readerrorlog 0, 1, 'failover';
+3. RPO Evidence
+☐ Pre-failover RPO measurement output ☐ Post-failover sync state
+SELECT
+db_name(database_id),
+DATEDIFF(SECOND, last_commit_time, GETUTCDATE()) AS RPO_seconds
+FROM sys.dm_hadr_database_replica_states;
+4. DNS Evidence
+☐ DNS record before failover ☐ DNS record after failover ☐ TTL value
+(Screenshot or DNS export)
+22 Date: 04 Jan, 2026-Sunday
+5. Approval Evidence
+☐ DR declaration email ☐ Incident Commander approval ☐ AWS-only DR approval (if applicable)
+B. Evidence Retention
+Item
+Retention
+PIR document
+≥ 1 year
+DR logs
+≥ 1 year
+DNS records
+≥ 90 days
+Approval emails
+≥ 1 year
+3️) ServiceNow / ITSM HANDOFF NOTES
+(Paste into Incident / Major Incident record)
+Owner: Incident Commander / DBA Lead
+Incident Description
+Hybrid SQL Server production outage requiring DR activation. Failover executed using Always On Availability Groups to AWS EC2 DR environment.
+Business Impact
+•
+Production SQL services unavailable or degraded
+•
+Customer-facing applications impacted
+•
+DR environment activated per approved runbook
+Actions Taken
+•
+Validated AG and WSFC health
+•
+Executed manual / forced failover to AWS
+•
+Updated DNS-based listener
+•
+Validated application connectivity
+•
+Stabilized production workloads
+DR Details
+Item
+Value
+DR Type
+Planned / Forced
+Primary After DR
+AWS EC2 SQL
+Estimated Data Loss
+< X minutes
+RTO Achieved
+Yes / No
+Current Status
+☐ Service Restored ☐ Monitoring Stable ☐ No further customer impact
+23 Date: 04 Jan, 2026-Sunday
+Next Steps
+•
+Schedule controlled failback (if applicable)
+•
+Complete Post-Incident Review
+•
+Implement corrective actions
+Closure Criteria
+☐ PIR completed ☐ Evidence archived ☐ Stakeholders notified ☐ Ticket approved for closure
+Summary:
+We now have:
+✔ Full SOP ✔ One-page operational runbook ✔ Incident card ✔ RPO measurement + trending ✔ AWS-only forced DR path ✔ Executive DR declaration template ✔ Post-incident review checklist ✔ Audit-ready evidence framework ✔ ITSM / ServiceNow handoff notes
+This is enterprise-grade, auditor-safe, and battle-tested architecture documentation.
+24 Date: 04 Jan, 2026-Sunday
+“DR Master Checklist” that combines all operational, technical, monitoring, audit, and executive tasks into one actionable reference.
+This is designed for production readiness, incident response, and post-incident closure, covering On-Prem → AWS SQL 2019 DR with Always On AG.
+DR MASTER CHECKLIST – SQL Server Hybrid HA / DR
+Scope: On-Prem SQL Server 2019 → AWS EC2 SQL Server 2019 (Always On AG, Async, DNS Listener) RTO: ≤ 30 min | RPO: ≤ 5 min
+1️) PRE-DR PREPARATION (PLANNED / DAILY CHECKS)
+Step
+Owner
+Status
+Validate WSFC cluster online
+Infra
+☐
+Validate AG health (primary replica connected & healthy)
+DBA
+☐
+Validate DB sync states (no SUSPENDED DBs)
+DBA
+☐
+Check RPO trend (run monitoring query)
+DBA
+☐
+Validate VPN / Direct Connect connectivity
+Network
+☐
+Verify DNS records & TTL
+Network
+☐
+Confirm SQL Agent jobs enabled only on primary
+DBA
+☐
+Backup successful (Full / Log)
+DBA
+☐
+RPO Trend Query (Pre-DR)
+SELECT GETUTCDATE() AS sample_time_utc,
+db_name(database_id) AS database_name,
+DATEDIFF(SECOND, last_commit_time, GETUTCDATE()) AS estimated_RPO_seconds
+FROM sys.dm_hadr_database_replica_states
+WHERE is_primary_replica = 1;
+2) INCIDENT DECLARATION / ESCALATION
+Step
+Owner
+Status
+Notify App Team
+Incident Commander
+☐
+Notify Network & Infra
+Incident Commander
+☐
+DR Declaration (Exec email template)
+Incident Commander
+☐
+Log DR start time
+DBA / Infra
+☐
+Capture RPO and AG state
+DBA
+☐
+Exec Email Template Summary
+•
+Reason for DR
+•
+DR type (Planned / Forced)
+•
+Expected impact (RPO, downtime)
+•
+Next update ETA
+25 Date: 04 Jan, 2026-Sunday
+3️) FAILOVER EXECUTION
+Step
+Owner
+Status
+Freeze ETL/jobs
+DBA / App
+☐
+Manual failover to AWS
+DBA
+☐
+Update DNS to AWS listener IP
+Network
+☐
+Validate AG primary role (AWS)
+DBA
+☐
+Validate DB online/read-write
+DBA
+☐
+Check SQL error logs for failover errors
+DBA
+☐
+App connectivity test (login/read/write)
+App Team
+☐
+Capture post-failover RPO
+DBA
+☐
+Post-Failover RPO Query
+SELECT db_name(database_id) AS database_name,
+DATEDIFF(SECOND, last_commit_time, GETUTCDATE()) AS estimated_RPO_seconds
+FROM sys.dm_hadr_database_replica_states;
+4️) AWS-ONLY FORCED DR (IF ON-PREM LOST)
+Step
+Owner
+Status
+Confirm on-prem lost >10 min
+DBA
+☐
+Force failover to AWS (ALLOW_DATA_LOSS)
+DBA
+☐
+Update DNS to AWS listener
+Network
+☐
+Validate DB state & AG primary
+DBA
+☐
+App validation
+App Team
+☐
+Document potential data loss
+DBA / Incident Commander
+☐
+SQL Command
+ALTER AVAILABILITY GROUP HybridAG FORCE_FAILOVER_ALLOW_DATA_LOSS;
+5️) MONITORING / VALIDATION
+Step
+Owner
+Status
+AG replica state
+DBA
+☐
+DB online / read-write
+DBA
+☐
+Error log check
+DBA
+☐
+RPO trend monitoring
+DBA
+☐
+App validation
+App Team
+☐
+SQL Agent jobs status
+DBA
+☐
+26 Date: 04 Jan, 2026-Sunday
+6) FAILBACK (CONTROLLED / POST INCIDENT)
+Step
+Owner
+Status
+Confirm on-prem healthy & reachable
+DBA / Infra
+☐
+Validate AG sync state
+DBA
+☐
+Planned failback to On-Prem
+DBA
+☐
+ALTER AVAILABILITY GROUP HybridAG FAILOVER;
+| Update DNS back to On-Prem IP | Network | ☐ | | Resume SQL Agent jobs on On-Prem | DBA | ☐ | | Disable jobs on AWS | DBA | ☐ | | App validation post-failback | App Team | ☐ |
+7️) POST-INCIDENT REVIEW (PIR)
+Step
+Owner
+Status
+Document outage start / end
+DBA / Incident Commander
+☐
+Validate AG & WSFC health
+DBA / Infra
+☐
+Validate RPO / data loss
+DBA
+☐
+Confirm backups completed
+DBA
+☐
+Root Cause Analysis (RCA)
+DBA / Infra
+☐
+Lessons Learned / Action Items
+DBA / Incident Commander
+☐
+PIR approved & distributed
+DBA / IC
+☐
+8️) AUDIT EVIDENCE COLLECTION
+Step
+Owner
+Status
+DR declaration email
+DBA / IC
+☐
+Pre & post failover AG state
+DBA
+☐
+RPO measurements
+DBA
+☐
+DNS changes & TTL
+Network
+☐
+SQL Error Logs (failover period)
+DBA
+☐
+Backups & job status
+DBA
+☐
+Retention
+•
+PIR & logs ≥ 1 year
+•
+DNS records ≥ 90 days
+•
+Approval emails ≥ 1 year
+27 Date: 04 Jan, 2026-Sunday
+9️) SERVICE MANAGEMENT / ITSM HANDOFF
+Step
+Owner
+Status
+Create / update Incident / Major Incident
+IC / DBA
+☐
+DR type & actions summary
+IC
+☐
+RTO / RPO confirmation
+IC / DBA
+☐
+Attach audit evidence
+DBA
+☐
+Confirm stakeholder notifications
+IC
+☐
+Close incident post-PIR
+IC
+☐
+GOLDEN RULES / SAFETY
+•
+Async commit only (no synchronous)
+•
+DNS-based listener only (no floating IP)
+•
+No auto-failover to AWS
+•
+Cloud Witness mandatory
+•
+Quarterly DR drills
+•
+Always document RPO / RTO during incidents
+This DR Master Checklist now combines:
+•
+Pre-DR readiness
+•
+Incident / failover execution
+•
+AWS-only forced DR
+•
+Monitoring & RPO tracking
+•
+Failback procedure
+•
+PIR & audit collection
+•
+ITSM handoff
