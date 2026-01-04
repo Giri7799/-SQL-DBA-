@@ -1,0 +1,30 @@
+1. **SQL Server DBA Role**: Manages, secures, optimizes, and maintains SQL Server databases for performance and availability.  
+2. **SQL Server Editions**: Ranges from free Express to full-featured Enterprise, each tailored for different workloads and budgets.  
+3. **Architecture Overview**: Built on protocol, relational, and storage engines to process queries and manage data efficiently.  
+4. **SQL Server Instances**: Separate installations with isolated configurations, allowing multiple environments on one server.  
+5. **System Databases**: Core databases (master, model, msdb, tempdb) that support SQL Server operations and configuration.  
+6. **User vs System Databases**: User databases store business data; system databases manage SQL Server internals.  
+7. **Service Account Best Practices**: Use least privilege domain accounts, avoid local system, and separate roles for security.  
+8. **Installation Checklist**: Includes prerequisites, disk layout, collation, service accounts, and patching plan.  
+9. **Default Ports & Security**: SQL Server uses TCP 1433; secure with firewalls, encryption, and port management.  
+10. **Authentication Modes**: Supports Windows Authentication and Mixed Mode (Windows + SQL logins).  
+11. **Windows vs SQL Authentication**: Windows is more secure via AD; SQL is flexible for non-domain access.  
+12. **Patching Importance**: Fixes bugs, closes vulnerabilities, and improves performance and stability.  
+13. **Versioning Explained**: SQL Server versions include major releases, builds, and patch levels.  
+14. **CU vs SP**: Cumulative Updates are frequent and include fixes; Service Packs are broader but now deprecated.  
+15. **Compatibility Levels**: Control query behavior to match older SQL versions for backward compatibility.  
+16. **Collation in SQL Server**: Defines rules for sorting and comparing text, including language and case sensitivity.  
+17. **Case Sensitivity**: Depends on collation; affects string comparisons, object names, and query results.  
+18. **File Types Explained**: SQL Server uses data (MDF), log (LDF), and secondary data (NDF) files.  
+19. **MDF, LDF, NDF Files**: MDF is primary data, LDF is transaction log, NDF is optional secondary data.  
+20. **Startup Parameters**: Control instance behavior during launch, like trace flags or alternate master DB.  
+21. **TempDB Overview**: A global workspace for temporary objects, sorting, and versioning.  
+22. **Why TempDB is Critical**: Supports query execution, internal operations, and must be optimized for performance.  
+23. **Memory Architecture**: Uses buffer pool, caches, and memory grants to manage workload efficiently.  
+24. **CPU Usage Basics**: Tracks query execution, parallelism, and waits to optimize performance.  
+25. **Disk I/O Fundamentals**: Measures read/write latency, throughput, and storage health for database access.  
+26. **Network Considerations**: Includes latency, packet loss, encryption, and endpoint configuration.  
+27. **Ports & Firewalls**: Secure SQL ports (e.g., 1433) with firewall rules and encrypted connections.  
+28. **Licensing Basics**: Based on core count or CALs, with different models for editions and environments.  
+29. **Common DBA Myths**: “DBAs only do backups” — they also optimize, secure, and architect data systems.  
+30. **Daily DBA Tasks**: Monitor health, tune performance, manage backups, respond to incidents, and support teams.
