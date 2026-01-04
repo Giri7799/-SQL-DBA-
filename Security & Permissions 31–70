@@ -1,0 +1,40 @@
+31. **Security Model**: SQL Server uses layered security—logins, users, roles, and permissions to protect data.  
+32. **Logins vs Users**: Logins authenticate at the server level; users map those logins inside databases.  
+33. **Server-Level Roles**: Predefined roles like sysadmin, securityadmin, and dbcreator manage instance-wide tasks.  
+34. **Database-Level Roles**: Roles like db_owner, db_datareader, and db_datawriter control access within a database.  
+35. **Fixed vs Custom Roles**: Fixed roles are built-in; custom roles are user-defined for tailored permissions.  
+36. **Least Privilege Principle**: Grant only the minimum permissions required to perform a task.  
+37. **GRANT, DENY, REVOKE**: GRANT allows, DENY blocks, REVOKE removes previously granted permissions.  
+38. **Audit Logins**: Use SQL Server Audit or Extended Events to track login activity and anomalies.  
+39. **Password Policies**: Enforce complexity, expiration, and lockout rules for SQL logins.  
+40. **Encryption Overview**: SQL Server supports encryption at rest, in transit, and at column level.  
+41. **Transparent Data Encryption (TDE)**: Encrypts entire database files automatically to protect data at rest.  
+42. **Always Encrypted**: Protects sensitive columns by encrypting data end-to-end, even from DBAs.  
+43. **Certificates**: Used for encryption, authentication, and securing connections in SQL Server.  
+44. **Asymmetric Keys**: Public/private key pairs for encryption and signing operations.  
+45. **Row-Level Security**: Restricts access to specific rows based on user context.  
+46. **Dynamic Data Masking**: Obscures sensitive data in query results without changing stored values.  
+47. **Auditing**: Tracks and logs database events for compliance and security monitoring.  
+48. **Vulnerability Assessment**: Built-in tool to scan databases for security misconfigurations.  
+49. **Protecting System Databases**: Backup regularly and restrict access to master, msdb, model, and tempdb.  
+50. **Security Best Practices**: Patch regularly, enforce least privilege, encrypt data, and monitor activity.  
+51. **Preventing SQL Injection**: Use parameterized queries, stored procedures, and input validation.  
+52. **Securing SQL Server Agent**: Restrict job ownership, secure service accounts, and audit job activity.  
+53. **Managing Permissions**: Use roles instead of direct grants to simplify and standardize access.  
+54. **Contained Databases**: Allow databases to manage their own users without server-level logins.  
+55. **Cross-Database Ownership Chaining**: Can expose data unintentionally; disable unless required.  
+56. **Public Role Risks**: Avoid granting permissions to the public role—it applies to all users.  
+57. **Failed Login Monitoring**: Track failed attempts via error logs, Extended Events, or auditing.  
+58. **Endpoint Security**: Secure endpoints for services like mirroring, Service Broker, and Always On.  
+59. **Service Broker Security**: Use certificates and encryption to secure message delivery.  
+60. **Encrypting Backups**: Protect backup files with encryption to prevent unauthorized access.  
+61. **Backup Encryption vs TDE**: TDE encrypts live data files; backup encryption secures exported backups.  
+62. **Securing Linked Servers**: Use least privilege, encrypted connections, and avoid hardcoded credentials.  
+63. **Managing Credentials**: Store external authentication securely with SQL Server credentials.  
+64. **Authentication Troubleshooting**: Check login mappings, permissions, and error logs for failed connections.  
+65. **Hardening Checklist**: Disable unused features, patch regularly, enforce strong authentication, and audit activity.  
+66. **Auditing Schema Changes**: Track DDL changes with SQL Server Audit or triggers.  
+67. **GDPR Considerations**: Ensure right-to-erasure, encryption, and audit trails for compliance.  
+68. **Data Privacy Best Practices**: Mask, encrypt, and minimize sensitive data exposure.  
+69. **Removing Orphaned Users**: Drop or remap users not linked to valid logins.  
+70. **Common Security Mistakes**: Overusing sysadmin, weak passwords, ignoring patches, and poor auditing.  
