@@ -1,0 +1,142 @@
+Log shipping is a critical feature for ensuring high availability and disaster recovery in SQL Server environments. Below is an in-depth explanation of commonly asked questions about log shipping in SQL DBA mock interviews, along with their answers.
+
+1. What are the high availabilities available in SQL Server?
+SQL Server offers several high availability options:
+Failover Clustering
+Database Mirroring
+Always On Availability Groups
+Log Shipping
+Replication
+
+2. How does log shipping work?
+Log shipping involves the continuous backup of transaction logs from a primary database, copying these logs to a secondary server, and then restoring them on the secondary server. This provides a warm standby for disaster recovery.
+
+3. How many jobs are created when you configure log shipping?
+Three jobs are created:
+Backup job (on the primary server).
+Copy job (on the secondary server).
+Restore job (on the secondary server).
+
+4. How many operational modes are available in log shipping?
+There are two operational modes:
+No Recovery Mode
+Standby Mode
+
+5. In which mode is the TUF file created?
+The TUF (Transaction Undo File) is created in Standby Mode.
+
+6. What is a TUF file, and what is its use?
+The TUF file stores incomplete transactions during log shipping. It enables the secondary database to be in a read-only state for reporting purposes.
+
+7. What happens if the TUF file is deleted?
+If the TUF file is deleted, the restore job will fail because it cannot undo incomplete transactions.
+
+8. Can we recover the deleted TUF file?
+No, the TUF file cannot be recreated. You need to reconfigure log shipping or perform a full restore.
+
+9. What is a .WRK file?
+A .WRK file is a temporary file created during the copy or restore process of transaction logs.
+
+10. Why should backup and copy folders have full permissions and be shared?
+Full permissions and sharing ensure that both the primary and secondary servers can access and manage transaction log files without interruption.
+
+11. Why might the restore job fail on the secondary server?
+Possible reasons:
+Missing transaction log files.
+Corrupt backup files.
+Network connectivity issues.
+Permissions issues.
+
+12. How do you resolve job failures?
+Steps include:
+Checking file paths and permissions.
+Verifying log sequence numbers.
+Ensuring uninterrupted access to the backup folder.
+
+13. Could you explain the log shipping failover process?
+To perform a failover:
+
+Restore all remaining transaction logs on the secondary server.
+Bring the secondary database online using WITH RECOVERY.
+Update connection strings to point to the secondary server.
+
+14. How much time does a manual failover take in log shipping?
+The time depends on the size of the unprocessed transaction logs and the network speed. Typically, it takes a few minutes to an hour.
+
+15. Where is the TUF file created?
+The TUF file is created in the restore folder of the secondary server.
+
+16. Where can you see the log shipping synchronization status?
+You can check the status in:
+
+SQL Server Management Studio (SSMS) under the Log Shipping Status Report.
+The msdb log_shipping_monitor_secondary table.
+
+17. Can we configure log shipping between SQL Server 2019 and SQL Server 2012?
+No, log shipping requires that both servers run the same version of SQL Server or that the secondary server has a newer version.
+
+18. Can we configure log shipping from SQL Server 2012 to 2019?
+Yes, the secondary server can have a newer version, but not vice versa.
+
+19. Can you configure log shipping for the MSDB database?
+No, system databases like MSDB are not supported for log shipping.
+
+20. Will granting write access to the primary database reflect on the secondary?
+No, changes to users and permissions are not replicated to the secondary server.
+
+21. How do you create a login and grant write access on a log-shipped database?
+Create the login on both servers.
+Use the same SID on both servers to ensure mapping.
+
+22. Can we configure multiple secondary servers in log shipping?
+Yes, you can configure multiple secondary servers.
+
+23. Is there a limit to the number of secondary servers in log shipping?
+No predefined limit exists; it depends on your system's resources and configuration.
+
+24. Have you configured multiple secondaries before?
+Yes, multiple secondary servers provide redundancy and load distribution for reporting.
+
+25. What are the limitations of log shipping?
+No automatic failover.
+Potential latency in synchronization.
+Manual intervention is required for failover.
+
+26. What are hot standby and warm standby?
+Hot Standby: Automatic failover (e.g., Always On Availability Groups).
+Warm Standby: Requires manual failover (e.g., Log Shipping).
+
+27. What happens if you take a manual log backup on the primary database?
+This breaks the log chain, causing restore jobs on the secondary to fail.
+
+28. Can I configure log shipping on SQL Server Express Edition?
+No, log shipping is not supported in the Express Edition.
+
+29. Can I pause log shipping synchronization for server maintenance?
+Yes, you can disable the log shipping jobs temporarily.
+
+30. Is it mandatory to have the same SQL Server editions for both primary and secondary servers?
+No, but both editions must support log shipping.
+
+31. Which SQL Server editions support log shipping?
+Standard
+Enterprise
+Developer
+
+32. Can I configure log shipping between Windows and Linux servers?
+Yes, it is possible, provided the SQL Server instances are compatible.
+
+33. Can I configure log shipping and database mirroring on the same database?
+Yes, but it is not recommended due to complexity and potential conflicts.
+
+34. What happens if I add a secondary data file to the primary database?
+The log shipping configuration will break, and you need to reinitialize it.
+
+35. How do you resolve the issue of a new data file in log shipping?
+Add the new data file to the secondary server.
+Restore the latest full backup and logs.
+
+36. How do you handle a request for a new login and access to a log-shipped database?
+Create the login on both servers.
+Map the login to the database on the primary server.
+Sync the login using the same SID on the secondary server.
